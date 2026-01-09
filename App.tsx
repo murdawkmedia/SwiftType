@@ -163,9 +163,7 @@ const App: React.FC = () => {
       <nav className={`apple-blur sticky top-0 z-50 px-6 py-4 border-b transition-colors duration-500 ${navClass}`}>
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors duration-300 ${isDark ? 'bg-white' : 'bg-black'}`}>
-              <span className={`font-bold text-lg ${isDark ? 'text-black' : 'text-white'}`}>S</span>
-            </div>
+            <img src="/logo.png" alt="SwiftType Logo" className="w-10 h-10 rounded-xl" />
             <h1 className="text-xl font-medium tracking-tight">SwiftType</h1>
           </div>
 
@@ -179,8 +177,8 @@ const App: React.FC = () => {
                     resetTest(d);
                   }}
                   className={`px-4 py-1.5 text-xs font-medium rounded-full transition-all duration-200 ${config.duration === d
-                      ? (isDark ? 'bg-white text-black' : 'bg-white shadow-sm text-blue-600')
-                      : (isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900')
+                    ? (isDark ? 'bg-white text-black' : 'bg-white shadow-sm text-blue-600')
+                    : (isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900')
                     }`}
                 >
                   {d}s
