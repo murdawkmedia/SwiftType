@@ -4,25 +4,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SwiftVoice | Elegant Voice Speed Test</title>
+  <title>SwiftType | Voice &amp; Keyboard Speed Test</title>
   <meta name="description"
-    content="SwiftType is a minimalist, distraction-free typing test designed to help you improve your typing speed and accuracy with elegance and focus.">
+    content="SwiftType is a minimalist, distraction-free speed test for voice and keyboard. Improve your typing speed and accuracy — all processing happens locally in your browser.">
   <meta name="keywords"
-    content="typing test, typing speed, wpm, wpm test, minimalist typing, swift type, typing practice, clean typing test">
+    content="typing test, typing speed, wpm, wpm test, voice typing, speech recognition, minimalist typing, swift type, typing practice, clean typing test, privacy typing test">
 
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://swifttype.pages.dev/">
-  <meta property="og:title" content="SwiftType | Elegant Typing Test">
-  <meta property="og:description" content="A minimalist, distraction-free typing test designed for focus and speed.">
+  <meta property="og:title" content="SwiftType | Voice &amp; Keyboard Speed Test">
+  <meta property="og:description" content="A minimalist, privacy-first speed test for voice and keyboard — no data leaves your browser.">
   <meta property="og:image" content="https://swifttype.pages.dev/og-image.png">
 
   <!-- Twitter -->
   <meta property="twitter:card" content="summary_large_image">
   <meta property="twitter:url" content="https://swifttype.pages.dev/">
-  <meta property="twitter:title" content="SwiftType | Elegant Typing Test">
+  <meta property="twitter:title" content="SwiftType | Voice &amp; Keyboard Speed Test">
   <meta property="twitter:description"
-    content="A minimalist, distraction-free typing test designed for focus and speed.">
+    content="A minimalist, privacy-first speed test for voice and keyboard — no data leaves your browser.">
   <meta property="twitter:image" content="https://swifttype.pages.dev/og-image.png">
 
   <script type="application/ld+json">
@@ -37,8 +37,8 @@
         "price": "0",
         "priceCurrency": "USD"
       },
-      "description": "A minimalist typing test application designed to improve typing speed and accuracy without distractions.",
-      "featureList": "Distraction-free interface, WPM tracking, Accuracy tracking, Dark/Light mode, Multiple durations",
+      "description": "A minimalist, privacy-first speed test for voice and keyboard. All processing is local — no data ever leaves your browser.",
+      "featureList": "Voice input via Web Speech API, Keyboard typing mode, WPM tracking, Accuracy tracking, Dark/Light mode, Multiple durations, Privacy-first (no external services)",
       "author": {
         "@type": "Organization",
         "name": "Murdawk Media",
@@ -64,20 +64,19 @@
     }
 
     .cursor-blink {
-      animation: blink 1s step-end infinite;
+      animation: cursor-blink 1s step-end infinite;
     }
 
-    @keyframes blink {
-
-      from,
-      to {
-        border-color: transparent
-      }
-
-      50% {
-        border-color: #0071e3
-      }
+    @keyframes cursor-blink {
+      from, to { border-color: transparent; }
+      50% { border-color: inherit; }
     }
+
+    /* Prevent mobile double-tap zoom on buttons */
+    button { touch-action: manipulation; }
+
+    /* Smooth scroll on mobile */
+    html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
 
     ::selection {
       background: rgba(0, 113, 227, 0.2);
