@@ -1,428 +1,578 @@
-
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import TypingArea from './components/TypingArea';
 import StatsOverlay from './components/StatsOverlay';
-import { TestStatus, TypingStats, TestConfig, Quote } from './types';
+import {
+  buildTranscriptFromResults,
+  calculateWpm,
+  countWords,
+  createEmptyStats,
+  matchSpeechPrefix,
+  recordKeystroke,
+} from './lib/typing';
+import {
+  InputMode,
+  Quote,
+  TestConfig,
+  TestStatus,
+  TypingStats,
+  VoiceProcessingMode,
+} from './types';
 import { DEFAULT_QUOTES, DURATIONS } from './constants';
 
-// Add type definition for Web Speech API
+type SpeechRecognitionAvailability =
+  | 'available'
+  | 'downloadable'
+  | 'downloading'
+  | 'unavailable'
+  | boolean;
+
+interface SpeechRecognitionLike {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  processLocally?: boolean;
+  onresult: ((event: { results: ArrayLike<any> }) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+interface SpeechRecognitionConstructor {
+  new (): SpeechRecognitionLike;
+  available?: (options: {
+    langs: string[];
+    processLocally: boolean;
+  }) => Promise<SpeechRecognitionAvailability>;
+  install?: (options: {
+    langs: string[];
+    processLocally: boolean;
+  }) => Promise<boolean>;
+}
+
 declare global {
   interface Window {
-    SpeechRecognition: any;
-    webkitSpeechRecognition: any;
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
   }
 }
 
+const VOICE_LANGUAGE = 'en-US';
+
 const App: React.FC = () => {
-  // State
   const [isDark, setIsDark] = useState(true);
   const [status, setStatus] = useState<TestStatus>(TestStatus.IDLE);
+  const [inputMode, setInputMode] = useState<InputMode>(InputMode.KEYBOARD);
   const [config, setConfig] = useState<TestConfig>({ duration: 30 });
   const [quote, setQuote] = useState<Quote>(DEFAULT_QUOTES[0]);
   const [userInput, setUserInput] = useState('');
   const [timeLeft, setTimeLeft] = useState(config.duration);
   const [isListening, setIsListening] = useState(false);
+  const [message, setMessage] = useState('');
+  const [voiceProcessingMode, setVoiceProcessingMode] =
+    useState<VoiceProcessingMode>(VoiceProcessingMode.UNKNOWN);
+  const [sessionStats, setSessionStats] =
+    useState<TypingStats>(createEmptyStats);
 
-  // Cumulative stats for the whole test session
-  const [sessionStats, setSessionStats] = useState<TypingStats>({
-    wpm: 0,
-    accuracy: 100,
-    charactersTyped: 0,
-    totalKeystrokes: 0,
-    incorrectKeystrokes: 0,
-    timeTaken: 0
-  });
-
-  // Refs
   const timerRef = useRef<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
-  const statsRef = useRef(sessionStats);
-  const recognitionRef = useRef<any>(null);
-
-  // Ref to hold latest state/handlers to avoid stale closures in event listeners
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const shouldRestartVoiceRef = useRef(false);
   const latestRef = useRef({
     status,
-    isListening,
+    inputMode,
     quote,
-    sessionStats,
-    handleSpeechInput: (val: string) => { } // Placeholder
   });
 
-  // Keep ref in sync for interval access
-  useEffect(() => {
-    statsRef.current = sessionStats;
-  }, [sessionStats]);
+  latestRef.current.status = status;
+  latestRef.current.inputMode = inputMode;
+  latestRef.current.quote = quote;
 
-  const getRandomQuote = (currentQuoteText?: string): Quote => {
-    let filtered = DEFAULT_QUOTES;
-    if (currentQuoteText) {
-      filtered = DEFAULT_QUOTES.filter(q => q.text !== currentQuoteText);
-    }
-    return filtered[Math.floor(Math.random() * filtered.length)];
-  };
-
-  const finishTest = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
-    setIsListening(false);
-    setStatus(TestStatus.FINISHED);
+  const getRandomQuote = useCallback((currentQuoteText?: string): Quote => {
+    const pool = currentQuoteText
+      ? DEFAULT_QUOTES.filter((candidate) => candidate.text !== currentQuoteText)
+      : DEFAULT_QUOTES;
+    return pool[Math.floor(Math.random() * pool.length)];
   }, []);
 
-  const resetTest = useCallback((newDuration?: number) => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
+  const clearTimer = useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
+  }, []);
 
-    const d = newDuration ?? config.duration;
-    setStatus(TestStatus.IDLE);
-    setUserInput('');
+  const safeStopRecognition = useCallback((allowRestart = false) => {
+    shouldRestartVoiceRef.current = allowRestart;
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+
+    try {
+      recognition.stop();
+    } catch {
+      // Some browser recognizers throw if they are already stopped.
+    }
+  }, []);
+
+  const stopVoiceSession = useCallback(() => {
+    shouldRestartVoiceRef.current = false;
+    safeStopRecognition(false);
+    recognitionRef.current = null;
     setIsListening(false);
-    setTimeLeft(d);
-    setQuote(getRandomQuote());
-    setSessionStats({
-      wpm: 0,
-      accuracy: 100,
-      charactersTyped: 0,
-      totalKeystrokes: 0,
-      incorrectKeystrokes: 0,
-      timeTaken: 0
-    });
-    startTimeRef.current = null;
-  }, [config.duration]);
+  }, [safeStopRecognition]);
 
-  // Handle Speech Input Definition
-  const handleSpeechInput = (value: string) => {
-    if (status === TestStatus.FINISHED) return;
+  const finishTest = useCallback(() => {
+    clearTimer();
+    stopVoiceSession();
+    setStatus(TestStatus.FINISHED);
+  }, [clearTimer, stopVoiceSession]);
 
-    // Normalization helper (lowercase, remove punctuation)
-    const normalize = (str: string) => str.toLowerCase().replace(/[^\w\s]/g, '');
+  const resetTest = useCallback(
+    (newDuration?: number) => {
+      clearTimer();
+      stopVoiceSession();
 
-    // Split target into words, keeping their original punctuation for reconstruction if needed
-    // But simply, we want to match against the *words* of the target.
-    const targetWords = quote.text.split(' ');
-    const spokenWords = value.trim().split(' ');
-
-    let matchedWordCount = 0;
-
-    // Check how many words match from the beginning
-    // We compare normalized spoken words against normalized target words
-    for (let i = 0; i < spokenWords.length && i < targetWords.length; i++) {
-      const spoken = normalize(spokenWords[i]);
-      const target = normalize(targetWords[i]);
-
-      if (spoken === target) {
-        matchedWordCount++;
-      } else {
-        break;
-      }
-    }
-
-    // Reconstruction:
-    let constructedInput = '';
-    if (matchedWordCount > 0) {
-      constructedInput = targetWords.slice(0, matchedWordCount).join(' ');
-      if (matchedWordCount < targetWords.length) {
-        constructedInput += ' ';
-      }
-    }
-
-    const accuracy = 100;
-
-    if (matchedWordCount > 0) {
-      setSessionStats(prev => ({
-        ...prev,
-        wpm: prev.wpm,
-        accuracy: accuracy,
-        totalKeystrokes: constructedInput.length,
-        incorrectKeystrokes: 0
-      }));
-
-      setUserInput(constructedInput);
-    }
-
-    // Check if we matched all words
-    if (matchedWordCount === targetWords.length) {
-      setSessionStats(prev => ({
-        ...prev,
-        charactersTyped: prev.charactersTyped + constructedInput.length
-      }));
-
+      const duration = newDuration ?? config.duration;
+      setStatus(TestStatus.IDLE);
       setUserInput('');
+      setTimeLeft(duration);
+      setQuote(getRandomQuote());
+      setSessionStats(createEmptyStats());
+      setMessage('');
+      setVoiceProcessingMode(VoiceProcessingMode.UNKNOWN);
+      startTimeRef.current = null;
+    },
+    [clearTimer, config.duration, getRandomQuote, stopVoiceSession]
+  );
 
-      // Stop recognition to clear buffer
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-
-      setQuote(getRandomQuote(quote.text));
-    }
-  };
-
-  // Update latestRef on every render so callbacks see fresh data/handlers
-  useEffect(() => {
-    latestRef.current = {
-      status,
-      isListening,
-      quote,
-      sessionStats,
-      handleSpeechInput
-    };
-  }, [status, isListening, quote, sessionStats, handleSpeechInput]); // handleSpeechInput is constant if defined outside or depends on these
-
-  const startTest = () => {
-    setStatus(TestStatus.RUNNING);
-    startTimeRef.current = Date.now();
-    setIsListening(true);
-
-    // Start Speech Recognition
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-
-      recognition.onresult = (event: any) => {
-        const currentTranscript = Array.from(event.results)
-          .map((result: any) => result[0].transcript)
-          .join('');
-
-        // Use latestRef to call the fresh handler
-        latestRef.current.handleSpeechInput(currentTranscript);
-      };
-
-      recognition.onerror = (event: any) => {
-        console.error('Speech recognition error', event.error);
-        if (event.error === 'not-allowed') {
-          alert('Microphone access denied. Please enable microphone permissions.');
-        }
-      };
-
-      recognition.onend = () => {
-        // Use latestRef to check fresh state
-        const { status, isListening } = latestRef.current;
-
-        // Restart if still running (handles silence timeouts)
-        if (status === TestStatus.RUNNING && isListening) {
-          try {
-            recognition.start();
-          } catch (e) {
-            // ignore
-          }
-        }
-      };
-
-      try {
-        recognition.start();
-        recognitionRef.current = recognition;
-      } catch (e) {
-        console.error('Failed to start recognition', e);
-      }
-    } else {
-      alert('Web Speech API not supported in this browser.');
-    }
-
+  const startTimer = useCallback(() => {
+    clearTimer();
     timerRef.current = window.setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
+      setTimeLeft((previous) => {
+        if (previous <= 1) {
           finishTest();
           return 0;
         }
-        return prev - 1;
+        return previous - 1;
       });
     }, 1000);
-  };
+  }, [clearTimer, finishTest]);
 
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      if (recognitionRef.current) recognitionRef.current.stop();
-      if (timerRef.current) clearInterval(timerRef.current);
+  const handleSpeechInput = useCallback(
+    (transcript: string) => {
+      const currentQuote = latestRef.current.quote;
+      if (latestRef.current.status !== TestStatus.RUNNING) return;
+
+      const match = matchSpeechPrefix(currentQuote.text, transcript);
+      if (match.matchedWordCount === 0) return;
+
+      setUserInput(match.displayInput);
+
+      if (match.isComplete) {
+        setSessionStats((previous) => ({
+          ...previous,
+          charactersTyped:
+            previous.charactersTyped + match.completedInput.length,
+          wordsTyped: previous.wordsTyped + match.targetWordCount,
+        }));
+        setUserInput('');
+        setQuote(getRandomQuote(currentQuote.text));
+        safeStopRecognition(true);
+      }
+    },
+    [getRandomQuote, safeStopRecognition]
+  );
+
+  const configureOnDeviceSpeech = useCallback(
+    async (
+      SpeechRecognition: SpeechRecognitionConstructor,
+      recognition: SpeechRecognitionLike
+    ): Promise<VoiceProcessingMode> => {
+      const supportsLocalSpeech =
+        'processLocally' in recognition &&
+        typeof SpeechRecognition.available === 'function';
+
+      if (!supportsLocalSpeech) {
+        return VoiceProcessingMode.BROWSER_PROVIDER;
+      }
+
+      try {
+        const availability = await SpeechRecognition.available!({
+          langs: [VOICE_LANGUAGE],
+          processLocally: true,
+        });
+
+        if (availability === true || availability === 'available') {
+          recognition.processLocally = true;
+          return VoiceProcessingMode.ON_DEVICE;
+        }
+
+        if (
+          (availability === 'downloadable' || availability === 'downloading') &&
+          typeof SpeechRecognition.install === 'function'
+        ) {
+          const installed = await SpeechRecognition.install({
+            langs: [VOICE_LANGUAGE],
+            processLocally: true,
+          });
+          if (installed) {
+            recognition.processLocally = true;
+            return VoiceProcessingMode.ON_DEVICE;
+          }
+        }
+      } catch {
+        return VoiceProcessingMode.BROWSER_PROVIDER;
+      }
+
+      return VoiceProcessingMode.BROWSER_PROVIDER;
+    },
+    []
+  );
+
+  const startSpeechRecognition = useCallback(async (): Promise<boolean> => {
+    const SpeechRecognition =
+      window.SpeechRecognition ?? window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      setMessage(
+        'Voice input is not supported in this browser. Keyboard mode is ready.'
+      );
+      return false;
     }
-  }, []);
 
-  // Real-time WPM calculation
-  useEffect(() => {
-    if (status !== TestStatus.RUNNING || !startTimeRef.current) return;
-
-    const updateWpm = () => {
-      const timeElapsedSec = (Date.now() - startTimeRef.current!) / 1000;
-      const timeElapsedMin = timeElapsedSec / 60;
-
-      // WPM = (all previously finished quotes chars + current input chars) / 5 / minutes
-      const totalChars = sessionStats.charactersTyped + userInput.length;
-      const currentWpm = timeElapsedMin > 0 ? (totalChars / 5) / timeElapsedMin : 0;
-
-      setSessionStats(prev => ({
-        ...prev,
-        wpm: currentWpm,
-        timeTaken: timeElapsedMin
-      }));
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = VOICE_LANGUAGE;
+    let startStoppedByError = false;
+    recognition.onresult = (event) => {
+      handleSpeechInput(buildTranscriptFromResults(event.results));
+    };
+    recognition.onerror = (event) => {
+      startStoppedByError = true;
+      const denied =
+        event.error === 'not-allowed' || event.error === 'service-not-allowed';
+      setMessage(
+        denied
+          ? 'Microphone access was denied. Switch to keyboard mode or allow microphone access to try voice.'
+          : `Voice input stopped: ${event.error}. Keyboard mode is ready.`
+      );
+      clearTimer();
+      shouldRestartVoiceRef.current = false;
+      setIsListening(false);
+      setStatus(TestStatus.IDLE);
+      setTimeLeft(config.duration);
+      recognitionRef.current = null;
+    };
+    recognition.onend = () => {
+      if (shouldRestartVoiceRef.current) {
+        try {
+          recognition.start();
+        } catch {
+          // Browser recognition may already be running after a quick restart.
+        }
+      }
     };
 
-    const interval = setInterval(updateWpm, 100);
-    return () => clearInterval(interval);
-  }, [status, userInput.length, sessionStats.charactersTyped]);
+    const processingMode = await configureOnDeviceSpeech(
+      SpeechRecognition,
+      recognition
+    );
 
-  const themeClass = isDark ? 'bg-[#161617] text-[#f5f5f7]' : 'bg-[#fbfbfd] text-[#1d1d1f]';
-  const navClass = isDark ? 'bg-black/70 border-white/10' : 'bg-white/70 border-gray-200/50';
+    try {
+      recognitionRef.current = recognition;
+      shouldRestartVoiceRef.current = true;
+      recognition.start();
+      if (startStoppedByError) {
+        return false;
+      }
+      setIsListening(true);
+      setVoiceProcessingMode(processingMode);
+      setMessage(
+        processingMode === VoiceProcessingMode.ON_DEVICE
+          ? 'Voice mode is using on-device recognition for this browser.'
+          : 'Voice mode uses your browser speech provider, which may process audio outside this app.'
+      );
+      return true;
+    } catch {
+      setMessage(
+        'Voice input could not start. Keyboard mode is ready without microphone access.'
+      );
+      recognitionRef.current = null;
+      shouldRestartVoiceRef.current = false;
+      setIsListening(false);
+      return false;
+    }
+  }, [
+    clearTimer,
+    config.duration,
+    configureOnDeviceSpeech,
+    handleSpeechInput,
+  ]);
+
+  const startTest = useCallback(async () => {
+    if (status === TestStatus.RUNNING) return;
+
+    setMessage('');
+    setUserInput('');
+    setTimeLeft(config.duration);
+
+    if (inputMode === InputMode.VOICE) {
+      const started = await startSpeechRecognition();
+      if (!started) return;
+    }
+
+    startTimeRef.current = Date.now();
+    setStatus(TestStatus.RUNNING);
+    startTimer();
+  }, [
+    config.duration,
+    inputMode,
+    startSpeechRecognition,
+    startTimer,
+    status,
+  ]);
+
+  const handleKeyboardInput = useCallback(
+    (value: string) => {
+      if (status !== TestStatus.RUNNING) return;
+      setUserInput(value);
+
+      if (value === quote.text) {
+        setSessionStats((previous) => ({
+          ...previous,
+          charactersTyped: previous.charactersTyped + value.length,
+          wordsTyped: previous.wordsTyped + countWords(quote.text),
+        }));
+        setUserInput('');
+        setQuote(getRandomQuote(quote.text));
+      }
+    },
+    [getRandomQuote, quote, status]
+  );
+
+  const handleKeystroke = useCallback(
+    (isCorrect: boolean) => {
+      if (inputMode !== InputMode.KEYBOARD || status !== TestStatus.RUNNING) {
+        return;
+      }
+      setSessionStats((previous) => recordKeystroke(previous, isCorrect));
+    },
+    [inputMode, status]
+  );
+
+  const changeMode = (mode: InputMode) => {
+    if (mode === inputMode) return;
+    setInputMode(mode);
+    resetTest();
+  };
+
+  const currentAcceptedWords =
+    inputMode === InputMode.VOICE ? countWords(userInput) : 0;
+  const acceptedWords = sessionStats.wordsTyped + currentAcceptedWords;
+  const isVoice = inputMode === InputMode.VOICE;
+  const privacyNote = isVoice
+    ? voiceProcessingMode === VoiceProcessingMode.ON_DEVICE
+      ? 'Voice recognition is running on device in this browser. This app still does not run a server or store results.'
+      : 'Voice recognition is handled by your browser speech provider and may process audio outside this app. SwiftType does not run a server, store audio, or keep results.'
+    : 'Keyboard mode runs in this browser. SwiftType does not run a server, store keystrokes, or keep results.';
+
+  useEffect(() => {
+    if (status !== TestStatus.RUNNING || startTimeRef.current === null) return;
+
+    const interval = window.setInterval(() => {
+      const elapsedMs = Date.now() - startTimeRef.current!;
+      const currentCharacters = userInput.trimEnd().length;
+
+      setSessionStats((previous) => ({
+        ...previous,
+        wpm: calculateWpm(
+          previous.charactersTyped,
+          currentCharacters,
+          elapsedMs
+        ),
+        timeTaken: elapsedMs / 1000 / 60,
+      }));
+    }, 200);
+
+    return () => window.clearInterval(interval);
+  }, [status, userInput]);
+
+  useEffect(() => {
+    return () => {
+      clearTimer();
+      stopVoiceSession();
+    };
+  }, [clearTimer, stopVoiceSession]);
 
   return (
-    <div className={`min-h-screen flex flex-col transition-colors duration-500 ${themeClass}`}>
-      <nav className={`apple-blur sticky top-0 z-50 px-6 py-4 border-b transition-colors duration-500 ${navClass}`}>
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <img src="/logo.png" alt="SwiftVoice Logo" className="w-10 h-10 rounded-xl" />
-            <h1 className="text-xl font-medium tracking-tight">SwiftVoice</h1>
-          </div>
+    <div className={isDark ? 'app theme-dark' : 'app theme-light'}>
+      <nav className="topbar" aria-label="Main navigation">
+        <div className="brand">
+          <img src="/logo.png" alt="SwiftType logo" className="brand-logo" />
+          <h1>SwiftType</h1>
+        </div>
 
-          <div className="flex items-center space-x-6">
-            <div className={`flex p-1 rounded-full border transition-colors duration-300 ${isDark ? 'bg-white/5 border-white/10' : 'bg-gray-100/80 border-gray-200'}`}>
-              {DURATIONS.map((d) => (
-                <button
-                  key={d}
-                  onClick={() => {
-                    setConfig({ duration: d });
-                    resetTest(d);
-                  }}
-                  className={`px-4 py-1.5 text-xs font-medium rounded-full transition-all duration-200 ${config.duration === d
-                    ? (isDark ? 'bg-white text-black' : 'bg-white shadow-sm text-blue-600')
-                    : (isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900')
-                    }`}
-                >
-                  {d}s
-                </button>
-              ))}
-            </div>
-
+        <div className="controls" aria-label="Test controls">
+          <div className="segmented-control" aria-label="Input mode">
             <button
-              onClick={() => setIsDark(!isDark)}
-              className={`p-2 rounded-full border transition-all duration-300 hover:scale-110 active:scale-95 ${isDark ? 'bg-white/10 border-white/20 text-yellow-400' : 'bg-gray-100 border-gray-200 text-gray-600'
-                }`}
-              title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
+              type="button"
+              aria-pressed={inputMode === InputMode.KEYBOARD}
+              onClick={() => changeMode(InputMode.KEYBOARD)}
             >
-              {isDark ? (
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clipRule="evenodd" />
-                </svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
-                </svg>
-              )}
+              Keyboard
+            </button>
+            <button
+              type="button"
+              aria-pressed={inputMode === InputMode.VOICE}
+              onClick={() => changeMode(InputMode.VOICE)}
+            >
+              Voice
             </button>
           </div>
+
+          <div className="segmented-control" aria-label="Duration">
+            {DURATIONS.map((duration) => (
+              <button
+                key={duration}
+                type="button"
+                aria-pressed={config.duration === duration}
+                onClick={() => {
+                  setConfig({ duration });
+                  resetTest(duration);
+                }}
+              >
+                {duration}s
+              </button>
+            ))}
+          </div>
+
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => setIsDark((current) => !current)}
+            aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {isDark ? 'Light' : 'Dark'}
+          </button>
         </div>
       </nav>
 
-      <main className="flex-grow flex flex-col items-center justify-center px-6 py-12 max-w-5xl mx-auto w-full">
+      <main className="workspace">
         <StatsOverlay
           wpm={sessionStats.wpm}
           accuracy={sessionStats.accuracy}
           timeLeft={timeLeft}
+          totalDuration={config.duration}
+          inputMode={inputMode}
+          acceptedWords={acceptedWords}
           isDark={isDark}
         />
 
-        <div className="w-full relative min-h-[300px] flex flex-col items-center justify-center">
-          {/* We pass a dummy onInputChange because we handle input via speech */}
-          <TypingArea
-            targetText={quote.text}
-            userInput={userInput}
-            isFinished={status === TestStatus.FINISHED}
-            isActive={status === TestStatus.RUNNING}
-            isDark={isDark}
-          />
+        <TypingArea
+          targetText={quote.text}
+          userInput={userInput}
+          onInputChange={handleKeyboardInput}
+          onKeystroke={handleKeystroke}
+          isFinished={status === TestStatus.FINISHED}
+          isActive={status === TestStatus.RUNNING}
+          isDark={isDark}
+          enableKeyboard={inputMode === InputMode.KEYBOARD}
+        />
 
-          <div className="mt-4">
-            {status === TestStatus.IDLE && (
-              <button
-                onClick={startTest}
-                className={`px-8 py-3 rounded-full font-medium transition-all duration-300 transform hover:scale-105 ${isDark ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30' : 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                  }`}
-              >
-                Start Speaking
-              </button>
-            )}
-            {status === TestStatus.RUNNING && (
-              <div className="flex items-center space-x-2 animate-pulse">
-                <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                <span className={isDark ? 'text-white' : 'text-black'}>Listening...</span>
-              </div>
-            )}
-          </div>
+        <div className="quote-author">- {quote.author}</div>
 
-          <div className={`mt-8 text-center font-light transition-colors duration-300 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-            — {quote.author}
-          </div>
-        </div>
-
-        <div className="mt-16 flex flex-col items-center">
-          {status === TestStatus.FINISHED && (
-            <div className={`mb-8 p-8 rounded-3xl shadow-xl transition-all duration-500 animate-in fade-in slide-in-from-bottom-4 border ${isDark ? 'bg-white/5 border-white/10 shadow-black/50' : 'bg-white border-gray-100 shadow-gray-200/50'
-              } flex flex-col items-center max-w-md w-full`}>
-              <h2 className={`text-2xl font-medium mb-6 ${isDark ? 'text-white' : 'text-gray-900'}`}>Test Results</h2>
-              <div className="grid grid-cols-2 gap-8 w-full">
-                <div className="text-center">
-                  <p className="text-sm text-gray-400 uppercase tracking-widest mb-1">Speed</p>
-                  <p className={`text-4xl font-light ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>{Math.round(sessionStats.wpm)} WPM</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-sm text-gray-400 uppercase tracking-widest mb-1">Accuracy</p>
-                  <p className={`text-4xl font-light ${isDark ? 'text-white' : 'text-gray-800'}`}>{Math.round(sessionStats.accuracy)}%</p>
-                </div>
-              </div>
-              <div className="mt-6 pt-6 border-t border-gray-500/10 w-full text-center">
-                <p className="text-xs text-gray-500 uppercase tracking-widest">Total Keystrokes: {sessionStats.totalKeystrokes}</p>
-              </div>
-            </div>
-          )}
-
-          {(status === TestStatus.FINISHED || status === TestStatus.RUNNING) && (
-            <button
-              onClick={() => resetTest()}
-              className={`group flex items-center space-x-2 px-8 py-3 rounded-full transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] shadow-lg ${isDark ? 'bg-white text-black hover:bg-gray-100 shadow-white/5' : 'bg-gray-900 text-white hover:bg-black shadow-gray-300'
-                }`}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className={`h-5 w-5 transition-transform duration-500 ${status === TestStatus.FINISHED ? 'rotate-180' : 'group-hover:rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              <span className="font-medium">Restart Test</span>
+        <div className="action-row">
+          {status === TestStatus.IDLE && (
+            <button className="primary-action" type="button" onClick={startTest}>
+              Start {inputMode === InputMode.VOICE ? 'Voice' : 'Keyboard'}
             </button>
           )}
 
-          <p className="mt-4 text-xs text-gray-500 uppercase tracking-widest">
-            Press Tab to reset
-          </p>
+          {status === TestStatus.RUNNING && (
+            <>
+              {isListening && (
+                <span className="listening-indicator" role="status">
+                  Listening
+                </span>
+              )}
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={() => resetTest()}
+              >
+                Restart
+              </button>
+            </>
+          )}
+
+          {status === TestStatus.FINISHED && (
+            <button
+              className="primary-action"
+              type="button"
+              onClick={() => resetTest()}
+            >
+              Try Again
+            </button>
+          )}
         </div>
+
+        {message && (
+          <div className="notice" role="status">
+            <p>{message}</p>
+            {inputMode === InputMode.VOICE && status !== TestStatus.RUNNING && (
+              <button
+                type="button"
+                className="text-action"
+                onClick={() => changeMode(InputMode.KEYBOARD)}
+              >
+                Use keyboard mode
+              </button>
+            )}
+          </div>
+        )}
+
+        <p className="privacy-note">{privacyNote}</p>
+
+        {status === TestStatus.FINISHED && (
+          <section className="results-card" aria-label="Test results">
+            <h2>Test Results</h2>
+            <div className="results-grid">
+              <div>
+                <span>Speed</span>
+                <strong>{Math.round(sessionStats.wpm)} WPM</strong>
+              </div>
+              <div>
+                <span>{inputMode === InputMode.VOICE ? 'Accepted' : 'Accuracy'}</span>
+                <strong>
+                  {inputMode === InputMode.VOICE
+                    ? `${sessionStats.wordsTyped} words`
+                    : `${Math.round(sessionStats.accuracy)}%`}
+                </strong>
+              </div>
+              <div>
+                <span>Characters</span>
+                <strong>{sessionStats.charactersTyped}</strong>
+              </div>
+              <div>
+                <span>{inputMode === InputMode.VOICE ? 'Mode' : 'Errors'}</span>
+                <strong>
+                  {inputMode === InputMode.VOICE
+                    ? voiceProcessingMode === VoiceProcessingMode.ON_DEVICE
+                      ? 'On device'
+                      : 'Browser'
+                    : sessionStats.incorrectKeystrokes}
+                </strong>
+              </div>
+            </div>
+          </section>
+        )}
       </main>
 
-      <footer className={`py-8 border-t transition-colors duration-500 ${isDark ? 'border-white/5' : 'border-gray-100'}`}>
-        <div className="max-w-5xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center text-sm text-gray-500">
-          <div className="flex flex-col md:flex-row items-center space-y-2 md:space-y-0 md:space-x-4">
-            <p>&copy; 2026 SwiftVoice. Pure Focus Voice.</p>
-            <div className="flex items-center space-x-1.5">
-              <span>Created by:</span>
-              <a
-                href="https://www.murdawkmedia.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`transition-colors duration-300 font-medium ${isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-black'}`}
-              >
-                Murdawk Media
-              </a>
-            </div>
-          </div>
-          <p className="text-xs italic opacity-50 mt-4 md:mt-0">Inspired by tech pioneers, from 1980 to today.</p>
-        </div>
+      <footer className="footer">
+        <span>Copyright 2026 SwiftType.</span>
+        <span>By Murdawk Media.</span>
+        <span>No account, backend, paid API, or app-owned telemetry.</span>
       </footer>
 
       <GlobalKeyListener onReset={() => resetTest()} />
@@ -432,15 +582,17 @@ const App: React.FC = () => {
 
 const GlobalKeyListener: React.FC<{ onReset: () => void }> = ({ onReset }) => {
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Tab') {
-        e.preventDefault();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Tab') {
+        event.preventDefault();
         onReset();
       }
     };
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onReset]);
+
   return null;
 };
 

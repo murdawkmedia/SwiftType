@@ -1,20 +1,30 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# SwiftType
 
-# Run and deploy your AI Studio app
+SwiftType is a free, privacy-focused speed test for keyboard input and opt-in browser voice recognition.
 
-This contains everything you need to run your app locally.
+## Privacy model
 
-View your app in AI Studio: https://ai.studio/apps/drive/12feB5nr-3TLLCz-pkRorPcsYZuy_51UF
+- Keyboard mode runs in the browser and does not send keystrokes to a SwiftType server.
+- Voice mode is opt-in. SwiftType asks the browser for speech recognition and prefers on-device recognition when the browser supports it.
+- Some browsers may process speech through their own speech service. SwiftType does not run a backend, store audio, keep results, or require a paid API key.
+- No Gemini key, account, telemetry service, or app-owned analytics are required.
 
-## Run Locally
+## Run locally
 
-**Prerequisites:**  Node.js
+Prerequisites: Node.js 18 or newer.
 
+```bash
+npm ci
+npm run dev
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Verify
+
+```bash
+npm run typecheck
+npm test
+npm run build
+npm run e2e
+```
+
+Cloudflare Pages should build from the repository root and publish the `dist` directory.

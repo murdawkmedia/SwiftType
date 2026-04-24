@@ -1,35 +1,56 @@
 
 import React from 'react';
+import { formatTime } from '../lib/typing';
+import { InputMode } from '../types';
 
 interface StatsOverlayProps {
   wpm: number;
   accuracy: number;
   timeLeft: number;
+  totalDuration: number;
+  inputMode: InputMode;
+  acceptedWords: number;
   isDark: boolean;
 }
 
-const StatsOverlay: React.FC<StatsOverlayProps> = ({ wpm, accuracy, timeLeft, isDark }) => {
-  const valueClass = isDark ? 'text-white' : 'text-gray-900';
-  const labelClass = isDark ? 'text-gray-500' : 'text-gray-400';
+const StatsOverlay: React.FC<StatsOverlayProps> = ({
+  wpm,
+  accuracy,
+  timeLeft,
+  totalDuration,
+  inputMode,
+  acceptedWords,
+}) => {
+  const thirdLabel = inputMode === InputMode.VOICE ? 'Words' : 'Accuracy';
+  const thirdValue =
+    inputMode === InputMode.VOICE
+      ? `${acceptedWords}`
+      : `${Math.round(accuracy)}%`;
+  const thirdAria =
+    inputMode === InputMode.VOICE
+      ? `${acceptedWords} accepted words`
+      : `${Math.round(accuracy)} percent accuracy`;
 
   return (
-    <div className="flex items-center space-x-12 justify-center mb-8">
-      <div className="flex flex-col items-center">
-        <span className={`text-xs font-semibold uppercase tracking-widest mb-1 transition-colors duration-300 ${labelClass}`}>Time</span>
-        <span className={`text-3xl font-light tabular-nums transition-colors duration-300 ${valueClass}`}>
-          {timeLeft}s
+    <div className="stats-overlay" role="status" aria-live="polite">
+      <div className="stat">
+        <span className="stat-label">Time</span>
+        <span className="stat-value" aria-label={`${timeLeft} seconds remaining`}>
+          {formatTime(timeLeft, totalDuration)}
         </span>
       </div>
-      <div className="flex flex-col items-center">
-        <span className={`text-xs font-semibold uppercase tracking-widest mb-1 transition-colors duration-300 ${labelClass}`}>WPM</span>
-        <span className={`text-3xl font-light tabular-nums transition-colors duration-300 ${valueClass}`}>
+
+      <div className="stat">
+        <span className="stat-label">WPM</span>
+        <span className="stat-value" aria-label={`${Math.round(wpm)} words per minute`}>
           {Math.round(wpm)}
         </span>
       </div>
-      <div className="flex flex-col items-center">
-        <span className={`text-xs font-semibold uppercase tracking-widest mb-1 transition-colors duration-300 ${labelClass}`}>Accuracy</span>
-        <span className={`text-3xl font-light tabular-nums transition-colors duration-300 ${valueClass}`}>
-          {Math.round(accuracy)}%
+
+      <div className="stat">
+        <span className="stat-label">{thirdLabel}</span>
+        <span className="stat-value" aria-label={thirdAria}>
+          {thirdValue}
         </span>
       </div>
     </div>

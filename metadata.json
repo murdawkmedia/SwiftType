@@ -1,6 +1,6 @@
 
 {
-  "name": "SwiftType - Minimalist Typing Experience",
-  "description": "A premium, Apple-inspired typing test designed for focus and speed. Test your words per minute (WPM) and accuracy with elegant real-time feedback and quotes from tech pioneers.",
+  "name": "SwiftType - Privacy-Focused Speed Test",
+  "description": "A free keyboard and opt-in browser voice speed test with no account, backend, paid API, or app-owned telemetry.",
   "requestFramePermissions": []
 }
