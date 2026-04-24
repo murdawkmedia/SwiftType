@@ -1,62 +1,124 @@
 
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 
 interface TypingAreaProps {
   targetText: string;
   userInput: string;
-  onInputChange: (value: string) => void;
+  onInputChange?: (value: string) => void;
+  onKeystroke?: (isCorrect: boolean) => void;
   isFinished: boolean;
   isActive: boolean;
   isDark: boolean;
+  enableKeyboard?: boolean;
 }
 
 const TypingArea: React.FC<TypingAreaProps> = ({
   targetText,
   userInput,
+  onInputChange,
+  onKeystroke,
   isFinished,
   isActive,
-  isDark
+  isDark,
+  enableKeyboard = false
 }) => {
-  // No references or input handling needed for voice
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const renderCharacters = () => {
-    return targetText.split('').map((char, index) => {
-      let colorClass = isDark ? 'text-gray-600' : 'text-gray-300';
-      let isCurrent = index === userInput.length;
+  useEffect(() => {
+    if (isActive && enableKeyboard && !isFinished) {
+      inputRef.current?.focus();
+    }
+  }, [enableKeyboard, isActive, isFinished]);
 
-      if (index < userInput.length) {
-        if (userInput[index] === char) {
-          colorClass = isDark ? 'text-white' : 'text-gray-800';
-        } else {
-          colorClass = isDark ? 'text-red-400 bg-red-400/10' : 'text-red-500 bg-red-50';
-        }
-      }
+  const handleContainerClick = () => {
+    if (enableKeyboard && isActive && !isFinished) {
+      inputRef.current?.focus();
+    }
+  };
 
-      return (
-        <span
-          key={index}
-          className={`relative transition-colors duration-150 rounded-[2px] ${colorClass} ${isCurrent && isActive ? (isDark ? 'border-l-2 border-blue-400' : 'border-l-2 border-blue-500') : ''
-            }`}
-        >
-          {char}
-        </span>
-      );
-    });
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      return;
+    }
+
+    if (
+      event.key.length === 1 &&
+      userInput.length < targetText.length &&
+      isActive &&
+      !isFinished
+    ) {
+      onKeystroke?.(event.key === targetText[userInput.length]);
+    }
+  };
+
+  const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (isFinished || !isActive) return;
+    const nextValue = event.target.value;
+    if (nextValue.length <= targetText.length) {
+      onInputChange?.(nextValue);
+    }
   };
 
   return (
-    <div
-      className="relative w-full max-w-4xl mx-auto py-12 px-8 min-h-[200px]"
+    <section
+      className="typing-area"
+      onClick={handleContainerClick}
+      aria-label="Typing test area"
     >
-      <div className="text-2xl md:text-3xl leading-relaxed tracking-tight font-normal text-left select-none">
-        {renderCharacters()}
+      {enableKeyboard && (
+        <input
+          ref={inputRef}
+          className="typing-capture"
+          type="text"
+          value={userInput}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          aria-label="Typing input"
+          autoCapitalize="off"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          enterKeyHint="next"
+          disabled={isFinished || !isActive}
+        />
+      )}
+
+      <p className="sr-only" aria-label="Target text">
+        {targetText}
+      </p>
+
+      <div className="character-stream" aria-hidden="true">
+        {targetText.split('').map((char, index) => {
+          const isTyped = index < userInput.length;
+          const isCorrect = isTyped && userInput[index] === char;
+          const isCurrent = index === userInput.length && isActive;
+
+          return (
+            <span
+              key={`${char}-${index}`}
+              data-testid={`char-${index}`}
+              className={[
+                'character',
+                isTyped ? 'is-typed' : '',
+                isCorrect ? 'is-correct' : '',
+                isTyped && !isCorrect ? 'is-incorrect' : '',
+                isCurrent ? 'is-current' : '',
+                isDark ? 'theme-dark' : 'theme-light',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+            >
+              {char}
+            </span>
+          );
+        })}
       </div>
 
       {!isActive && !isFinished && (
-        <div className={`absolute inset-0 flex items-center justify-center rounded-2xl pointer-events-none transition-all duration-300 ${isDark ? 'bg-black/20 backdrop-blur-[1px]' : 'bg-white/40 backdrop-blur-[2px]'}`}>
-        </div>
+        <div className="typing-idle-overlay" aria-hidden="true" />
       )}
-    </div>
+    </section>
   );
 };
 

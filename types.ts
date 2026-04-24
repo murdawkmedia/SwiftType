@@ -1,9 +1,19 @@
 
 export enum TestStatus {
   IDLE = 'IDLE',
-  STARTING = 'STARTING',
   RUNNING = 'RUNNING',
   FINISHED = 'FINISHED'
+}
+
+export enum InputMode {
+  KEYBOARD = 'KEYBOARD',
+  VOICE = 'VOICE'
+}
+
+export enum VoiceProcessingMode {
+  UNKNOWN = 'UNKNOWN',
+  ON_DEVICE = 'ON_DEVICE',
+  BROWSER_PROVIDER = 'BROWSER_PROVIDER'
 }
 
 export interface TypingStats {
@@ -13,6 +23,7 @@ export interface TypingStats {
   totalKeystrokes: number;
   incorrectKeystrokes: number;
   timeTaken: number;
+  wordsTyped: number;
 }
 
 export interface TestConfig {
