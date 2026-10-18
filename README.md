@@ -1,5 +1,17 @@
 # SwiftType
 
+Live app: [swifttype.pages.dev](https://swifttype.pages.dev/).
+
+## Source and distribution
+
+The [Nostr repository](https://gitworkshop.dev/npub17j3f7cuhcvjqnf7d80x6rt9hmkkhdguwg4l2th0h4qnhqketr63s6xakwv/git.shakespeare.diy/swifttype) is authoritative.
+The [Hilary GitHub repository](https://github.com/hilaryduffrules-hash/swifttype) is a distribution mirror with Actions disabled. Use GitWorkshop for contributions.
+With ngit installed: `git clone nostr://npub17j3f7cuhcvjqnf7d80x6rt9hmkkhdguwg4l2th0h4qnhqketr63s6xakwv/git.shakespeare.diy/swifttype`.
+
+The existing Cloudflare Pages site is preserved. Releases deploy directly from
+the reviewed Nostr commit; see [DEPLOY.md](DEPLOY.md).
+
+
 SwiftType is a free, privacy-focused speed test for keyboard input and opt-in browser voice recognition.
 
 ## Privacy model
