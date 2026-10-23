@@ -5,9 +5,11 @@ test('keyboard mode completes a quote and records stats', async ({ page }) => {
   await page.getByRole('button', { name: 'Start Keyboard' }).click();
 
   const targetText = await page.getByLabel('Target text').innerText();
-  await page.getByLabel('Typing input').fill(targetText);
+  await page.getByLabel('Typing input').pressSequentially(targetText);
 
   await expect(page.getByLabel('Typing input')).toHaveValue('');
+  await expect(page.getByLabel('Target text')).not.toHaveText(targetText);
+  await expect(page.getByLabel('100 percent accuracy')).toBeVisible();
 });
 
 test('voice mode handles multi-segment transcripts with spaces', async ({ page }) => {
