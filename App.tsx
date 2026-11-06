@@ -68,6 +68,7 @@ const App: React.FC = () => {
   const [userInput, setUserInput] = useState('');
   const [timeLeft, setTimeLeft] = useState(config.duration);
   const [isListening, setIsListening] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   const [message, setMessage] = useState('');
   const [voiceProcessingMode, setVoiceProcessingMode] =
     useState<VoiceProcessingMode>(VoiceProcessingMode.UNKNOWN);
@@ -78,15 +79,19 @@ const App: React.FC = () => {
   const startTimeRef = useRef<number | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const shouldRestartVoiceRef = useRef(false);
+  const voiceSessionRef = useRef(0);
+  const startingRef = useRef(false);
   const latestRef = useRef({
     status,
     inputMode,
     quote,
+    userInput,
   });
 
   latestRef.current.status = status;
   latestRef.current.inputMode = inputMode;
   latestRef.current.quote = quote;
+  latestRef.current.userInput = userInput;
 
   const getRandomQuote = useCallback((currentQuoteText?: string): Quote => {
     const pool = currentQuoteText
@@ -115,13 +120,32 @@ const App: React.FC = () => {
   }, []);
 
   const stopVoiceSession = useCallback(() => {
+    voiceSessionRef.current += 1;
+    startingRef.current = false;
+    setIsStarting(false);
     shouldRestartVoiceRef.current = false;
+    if (recognitionRef.current) {
+      recognitionRef.current.onresult = null;
+      recognitionRef.current.onerror = null;
+      recognitionRef.current.onend = null;
+    }
     safeStopRecognition(false);
     recognitionRef.current = null;
     setIsListening(false);
   }, [safeStopRecognition]);
 
   const finishTest = useCallback(() => {
+    if (latestRef.current.status !== TestStatus.RUNNING) return;
+    latestRef.current.status = TestStatus.FINISHED;
+    const currentInput = latestRef.current.userInput.trimEnd();
+    const elapsedMs = Date.now() - (startTimeRef.current ?? Date.now());
+    setSessionStats((previous) => ({
+      ...previous,
+      charactersTyped: previous.charactersTyped + currentInput.length,
+      wordsTyped: previous.wordsTyped + countWords(currentInput),
+      wpm: calculateWpm(previous.charactersTyped, currentInput.length, elapsedMs),
+      timeTaken: elapsedMs / 1000 / 60,
+    }));
     clearTimer();
     stopVoiceSession();
     setStatus(TestStatus.FINISHED);
@@ -148,15 +172,12 @@ const App: React.FC = () => {
   const startTimer = useCallback(() => {
     clearTimer();
     timerRef.current = window.setInterval(() => {
-      setTimeLeft((previous) => {
-        if (previous <= 1) {
-          finishTest();
-          return 0;
-        }
-        return previous - 1;
-      });
+      const elapsedMs = Date.now() - (startTimeRef.current ?? Date.now());
+      const remaining = Math.max(0, Math.ceil(config.duration - elapsedMs / 1000));
+      setTimeLeft(remaining);
+      if (remaining === 0) finishTest();
     }, 1000);
-  }, [clearTimer, finishTest]);
+  }, [clearTimer, config.duration, finishTest]);
 
   const handleSpeechInput = useCallback(
     (transcript: string) => {
@@ -229,7 +250,7 @@ const App: React.FC = () => {
     []
   );
 
-  const startSpeechRecognition = useCallback(async (): Promise<boolean> => {
+  const startSpeechRecognition = useCallback(async (session: number): Promise<boolean> => {
     const SpeechRecognition =
       window.SpeechRecognition ?? window.webkitSpeechRecognition;
 
@@ -244,11 +265,14 @@ const App: React.FC = () => {
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = VOICE_LANGUAGE;
+    recognitionRef.current = recognition;
     let startStoppedByError = false;
     recognition.onresult = (event) => {
+      if (session !== voiceSessionRef.current) return;
       handleSpeechInput(buildTranscriptFromResults(event.results));
     };
     recognition.onerror = (event) => {
+      if (session !== voiceSessionRef.current) return;
       startStoppedByError = true;
       const denied =
         event.error === 'not-allowed' || event.error === 'service-not-allowed';
@@ -263,9 +287,11 @@ const App: React.FC = () => {
       setStatus(TestStatus.IDLE);
       setTimeLeft(config.duration);
       recognitionRef.current = null;
+      startingRef.current = false;
+      setIsStarting(false);
     };
     recognition.onend = () => {
-      if (shouldRestartVoiceRef.current) {
+      if (session === voiceSessionRef.current && shouldRestartVoiceRef.current) {
         try {
           recognition.start();
         } catch {
@@ -278,6 +304,8 @@ const App: React.FC = () => {
       SpeechRecognition,
       recognition
     );
+
+    if (session !== voiceSessionRef.current) return false;
 
     try {
       recognitionRef.current = recognition;
@@ -311,14 +339,30 @@ const App: React.FC = () => {
   ]);
 
   const startTest = useCallback(async () => {
-    if (status === TestStatus.RUNNING) return;
+    if (status === TestStatus.RUNNING || startingRef.current) return;
+
+    const session = ++voiceSessionRef.current;
 
     setMessage('');
     setUserInput('');
     setTimeLeft(config.duration);
 
     if (inputMode === InputMode.VOICE) {
-      const started = await startSpeechRecognition();
+      startingRef.current = true;
+      setIsStarting(true);
+      let started = false;
+      try {
+        started = await startSpeechRecognition(session);
+      } catch {
+        if (session === voiceSessionRef.current) {
+          stopVoiceSession();
+          setMessage('Voice input could not start. Keyboard mode is ready without microphone access.');
+        }
+        return;
+      }
+      if (session !== voiceSessionRef.current) return;
+      startingRef.current = false;
+      setIsStarting(false);
       if (!started) return;
     }
 
@@ -329,6 +373,7 @@ const App: React.FC = () => {
     config.duration,
     inputMode,
     startSpeechRecognition,
+    stopVoiceSession,
     startTimer,
     status,
   ]);
@@ -368,7 +413,7 @@ const App: React.FC = () => {
   };
 
   const currentAcceptedWords =
-    inputMode === InputMode.VOICE ? countWords(userInput) : 0;
+    inputMode === InputMode.VOICE && status !== TestStatus.FINISHED ? countWords(userInput) : 0;
   const acceptedWords = sessionStats.wordsTyped + currentAcceptedWords;
   const isVoice = inputMode === InputMode.VOICE;
   const privacyNote = isVoice
@@ -381,6 +426,7 @@ const App: React.FC = () => {
     if (status !== TestStatus.RUNNING || startTimeRef.current === null) return;
 
     const interval = window.setInterval(() => {
+      if (latestRef.current.status !== TestStatus.RUNNING) return;
       const elapsedMs = Date.now() - startTimeRef.current!;
       const currentCharacters = userInput.trimEnd().length;
 
@@ -409,7 +455,7 @@ const App: React.FC = () => {
     <div className={isDark ? 'app theme-dark' : 'app theme-light'}>
       <nav className="topbar" aria-label="Main navigation">
         <div className="brand">
-          <img src="/logo.png" alt="SwiftType logo" className="brand-logo" />
+          <img src="/swifttype/logo.png" alt="SwiftType logo" className="brand-logo" />
           <h1>SwiftType</h1>
         </div>
 
@@ -484,8 +530,8 @@ const App: React.FC = () => {
 
         <div className="action-row">
           {status === TestStatus.IDLE && (
-            <button className="primary-action" type="button" onClick={startTest}>
-              Start {inputMode === InputMode.VOICE ? 'Voice' : 'Keyboard'}
+            <button className="primary-action" type="button" disabled={isStarting} onClick={startTest}>
+              {isStarting ? 'Preparing voice…' : `Start ${inputMode === InputMode.VOICE ? 'Voice' : 'Keyboard'}`}
             </button>
           )}
 
@@ -575,25 +621,8 @@ const App: React.FC = () => {
         <span>No account, backend, paid API, or app-owned telemetry.</span>
       </footer>
 
-      <GlobalKeyListener onReset={() => resetTest()} />
     </div>
   );
-};
-
-const GlobalKeyListener: React.FC<{ onReset: () => void }> = ({ onReset }) => {
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Tab') {
-        event.preventDefault();
-        onReset();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onReset]);
-
-  return null;
 };
 
 export default App;

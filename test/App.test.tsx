@@ -12,6 +12,58 @@ afterEach(() => {
 });
 
 describe('App', () => {
+  it('records accuracy for mobile input events without keydown', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: 'Start Keyboard' }));
+    fireEvent.input(screen.getByLabelText('Typing input'), { target: { value: 'X' }, inputType: 'insertText' });
+    expect(screen.getByLabelText('0 percent accuracy')).toBeInTheDocument();
+  });
+
+  it('lets Tab move focus without resetting a running test', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: 'Start Keyboard' }));
+    const input = screen.getByLabelText('Typing input');
+    await user.type(input, 'D');
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Restart' })).toHaveFocus();
+    expect(input).toHaveValue('D');
+    expect(screen.queryByRole('button', { name: 'Start Keyboard' })).not.toBeInTheDocument();
+  });
+
+  it('cancels pending voice setup when switching to keyboard', async () => {
+    let resolveAvailability!: (value: string) => void;
+    const start = vi.fn();
+    class PendingRecognition {
+      static available = () => new Promise<string>((resolve) => { resolveAvailability = resolve; });
+      continuous = false;
+      interimResults = false;
+      lang = '';
+      processLocally = false;
+      onresult = null;
+      onerror = null;
+      onend = null;
+      start = start;
+      stop() {}
+    }
+    window.SpeechRecognition = PendingRecognition as any;
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: 'Voice' }));
+    await user.click(screen.getByRole('button', { name: 'Start Voice' }));
+    await user.click(screen.getByRole('button', { name: 'Keyboard' }));
+    await act(async () => { resolveAvailability('available'); });
+    expect(start).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Start Keyboard' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Typing input')).toBeDisabled();
+  });
+
+  it('loads its branding from the hosted app path', () => {
+    render(<App />);
+    expect(screen.getByAltText('SwiftType logo')).toHaveAttribute('src', '/swifttype/logo.png');
+  });
+
   it('starts in keyboard mode and captures typing', async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -98,6 +150,26 @@ describe('App', () => {
       vi.advanceTimersByTime(30_000);
     });
 
+    expect(screen.getByRole('heading', { name: 'Test Results' })).toBeInTheDocument();
+  });
+
+  it('includes the unfinished quote in final character and speed stats', () => {
+    vi.useFakeTimers();
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start Keyboard' }));
+    fireEvent.input(screen.getByLabelText('Typing input'), { target: { value: 'Design is' } });
+    act(() => { vi.advanceTimersByTime(30_000); });
+    const results = screen.getByRole('region', { name: 'Test results' });
+    expect(results).toHaveTextContent('Characters9');
+    expect(results).toHaveTextContent('Speed4 WPM');
+  });
+
+  it('finishes on time after the browser delays a timer tick', () => {
+    vi.useFakeTimers();
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Start Keyboard' }));
+    vi.setSystemTime(Date.now() + 60_000);
+    act(() => { vi.advanceTimersByTime(1000); });
     expect(screen.getByRole('heading', { name: 'Test Results' })).toBeInTheDocument();
   });
 });

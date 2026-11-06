@@ -36,26 +36,19 @@ const TypingArea: React.FC<TypingAreaProps> = ({
     }
   };
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Tab') {
-      event.preventDefault();
-      return;
-    }
-
-    if (
-      event.key.length === 1 &&
-      userInput.length < targetText.length &&
-      isActive &&
-      !isFinished
-    ) {
-      onKeystroke?.(event.key === targetText[userInput.length]);
-    }
-  };
-
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (isFinished || !isActive) return;
     const nextValue = event.target.value;
     if (nextValue.length <= targetText.length) {
+      // Input events cover physical keyboards, mobile keyboards and paste.
+      // Count inserted/replaced characters; deleting a mistake keeps its history.
+      let prefix = 0;
+      while (prefix < userInput.length && prefix < nextValue.length && userInput[prefix] === nextValue[prefix]) prefix += 1;
+      let suffix = 0;
+      while (suffix < userInput.length - prefix && suffix < nextValue.length - prefix && userInput[userInput.length - 1 - suffix] === nextValue[nextValue.length - 1 - suffix]) suffix += 1;
+      for (let index = prefix; index < nextValue.length - suffix; index += 1) {
+        onKeystroke?.(nextValue[index] === targetText[index]);
+      }
       onInputChange?.(nextValue);
     }
   };
@@ -73,7 +66,6 @@ const TypingArea: React.FC<TypingAreaProps> = ({
           type="text"
           value={userInput}
           onChange={handleChange}
-          onKeyDown={handleKeyDown}
           aria-label="Typing input"
           autoCapitalize="off"
           autoComplete="off"

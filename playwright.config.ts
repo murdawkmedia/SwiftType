@@ -4,12 +4,12 @@ export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
   use: {
-    baseURL: 'http://127.0.0.1:3137',
+    baseURL: 'http://127.0.0.1:3137/swifttype/',
     trace: 'on-first-retry',
   },
   webServer: {
     command: 'npm run dev -- --host 127.0.0.1 --port 3137 --strictPort',
-    url: 'http://127.0.0.1:3137',
+    url: 'http://127.0.0.1:3137/swifttype/',
     reuseExistingServer: false,
     timeout: 120_000,
   },

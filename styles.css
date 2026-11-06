@@ -24,6 +24,16 @@ button {
   font: inherit;
 }
 
+button:focus-visible {
+  outline: 3px solid #4f8cff;
+  outline-offset: 3px;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -138,8 +148,8 @@ button {
 }
 
 .segmented-control button[aria-pressed="true"] {
-  background: currentColor;
-  color: var(--selected-text, #111216);
+  background: #f6f7fb;
+  color: #111216;
 }
 
 .theme-dark .segmented-control button[aria-pressed="true"] {
@@ -237,7 +247,19 @@ button {
 }
 
 .character.theme-light {
-  color: #b5bfcc;
+  color: #586174;
+}
+
+.theme-light .stat-label,
+.theme-light .results-card span,
+.theme-light .quote-author,
+.theme-light .privacy-note,
+.theme-light .footer {
+  color: #566176;
+}
+
+.character.is-incorrect.theme-light {
+  color: #b42338;
 }
 
 .character.is-correct.theme-dark {

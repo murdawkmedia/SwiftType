@@ -1,6 +1,6 @@
 # SwiftType
 
-Live app: [swifttype.pages.dev](https://swifttype.pages.dev/).
+Live app: [murdawkmedia.com/swifttype](https://www.murdawkmedia.com/swifttype/).
 
 ## Source and distribution
 
@@ -8,8 +8,10 @@ The [Nostr repository](https://gitworkshop.dev/npub17j3f7cuhcvjqnf7d80x6rt9hmkkh
 The [MurdawkMedia GitHub repository](https://github.com/murdawkmedia/SwiftType) is a passive distribution mirror. Use GitWorkshop for contributions.
 With ngit installed: `git clone nostr://npub17j3f7cuhcvjqnf7d80x6rt9hmkkhdguwg4l2th0h4qnhqketr63s6xakwv/git.shakespeare.diy/swifttype`.
 
-The existing Cloudflare Pages site is preserved. Releases deploy directly from
-the reviewed Nostr commit; see [DEPLOY.md](DEPLOY.md).
+The app is served under `/swifttype/` by the existing Murdawk Media website's
+Cloudflare Workers asset deployment. Its former standalone Pages project was
+removed on 2026-11-05 after live verification. Keep the source repository separate;
+see [DEPLOY.md](DEPLOY.md) for importing a reviewed build into the website.
 
 
 SwiftType is a free, privacy-focused speed test for keyboard input and opt-in browser voice recognition.
@@ -23,12 +25,14 @@ SwiftType is a free, privacy-focused speed test for keyboard input and opt-in br
 
 ## Run locally
 
-Prerequisites: Node.js 18 or newer.
+Prerequisites: Node.js 22 or newer.
 
 ```bash
 npm ci
 npm run dev
 ```
+
+Open the development server at `/swifttype/`.
 
 ## Verify
 
@@ -39,4 +43,8 @@ npm run build
 npm run e2e
 ```
 
-Cloudflare Pages should build from the repository root and publish the `dist` directory.
+The build emits `dist` with `/swifttype/` asset URLs. It is imported into the
+studio website before that website is deployed; do not recreate a Pages project.
+
+Regression checks cover keyboard navigation, mobile input accuracy, canceled
+voice startup, timer delays, partial-quote results and readable theme controls.
